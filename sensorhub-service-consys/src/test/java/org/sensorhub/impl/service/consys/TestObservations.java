@@ -172,6 +172,21 @@ public class TestObservations extends AbstractTestApiBase
         sendGetRequestAndCheckStatus(dsUrl2, 404);
         sendGetRequestAndGetItems(OBS_COLLECTION, 0);
     }
+
+
+    @Test
+    public void testCql2NotEqualsAndInvalidFilterStatus() throws Exception
+    {
+        var sysUrl = systemTests.addFeature(8);
+        var dsUrl = datastreamTests.addDatastreamOmJson(sysUrl, 117);
+        addObservationBatch(dsUrl, Instant.now(), 100, 3, false);
+
+        var encodedValid = java.net.URLEncoder.encode("adjudicatedIds!='eml-non-threat'", java.nio.charset.StandardCharsets.UTF_8);
+        sendGetRequestAndCheckStatus(concat(dsUrl, OBS_COLLECTION) + "?filter=" + encodedValid, 200);
+
+        var encodedInvalid = java.net.URLEncoder.encode("adjudicatedIds ! 'eml-non-threat'", java.nio.charset.StandardCharsets.UTF_8);
+        sendGetRequestAndCheckStatus(concat(dsUrl, OBS_COLLECTION) + "?filter=" + encodedInvalid, 400);
+    }
     
     
     // Non-Test helper methods

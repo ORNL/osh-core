@@ -221,6 +221,87 @@ public class ObsFilter implements IQueryFilter, Predicate<IObsData>
     }
 
 
+    /**
+     * Parses a CQL/CQL2 text predicate into a GeoTools {@link Filter}, normalizing
+     * OGC CQL2 {@code !=} comparison operators outside quoted literals so both
+     * {@code !=} and {@code <>} parse consistently.
+     * @param cqlFilter The CQL/CQL2 predicate text
+     * @return Parsed GeoTools filter
+     * @throws CQLException If the predicate is blank or syntactically invalid
+     */
+    public static Filter parseCqlFilter(String cqlFilter) throws CQLException
+    {
+        if (cqlFilter == null || cqlFilter.isBlank())
+            throw new CQLException("Empty CQL2 filter");
+        return CQL2.toFilter(normalizeCql2Operators(cqlFilter));
+    }
+
+
+    static String normalizeCql2Operators(String cql)
+    {
+        int length = cql.length();
+        StringBuilder out = new StringBuilder(length);
+        boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
+        for (int i = 0; i < length; i++)
+        {
+            char ch = cql.charAt(i);
+            if (inSingleQuote)
+            {
+                out.append(ch);
+                if (ch == '\'')
+                {
+                    if (i + 1 < length && cql.charAt(i + 1) == '\'')
+                    {
+                        out.append('\'');
+                        i++;
+                    }
+                    else
+                    {
+                        inSingleQuote = false;
+                    }
+                }
+            }
+            else if (inDoubleQuote)
+            {
+                out.append(ch);
+                if (ch == '"')
+                {
+                    if (i + 1 < length && cql.charAt(i + 1) == '"')
+                    {
+                        out.append('"');
+                        i++;
+                    }
+                    else
+                    {
+                        inDoubleQuote = false;
+                    }
+                }
+            }
+            else if (ch == '\'')
+            {
+                inSingleQuote = true;
+                out.append(ch);
+            }
+            else if (ch == '"')
+            {
+                inDoubleQuote = true;
+                out.append(ch);
+            }
+            else if (ch == '!' && i + 1 < length && cql.charAt(i + 1) == '=')
+            {
+                out.append("<>");
+                i++;
+            }
+            else
+            {
+                out.append(ch);
+            }
+        }
+        return out.toString();
+    }
+
+
     @Override
     public String toString()
     {
@@ -621,7 +702,7 @@ public class ObsFilter implements IQueryFilter, Predicate<IObsData>
         public B withCQLFilter(String cqlFilter)
         {
             try {
-                instance.cqlFilter = CQL2.toFilter(cqlFilter);
+                instance.cqlFilter = parseCqlFilter(cqlFilter);
                 return (B)this;
             } catch (CQLException e) {
                 throw new IllegalArgumentException("Invalid CQL filter", e);

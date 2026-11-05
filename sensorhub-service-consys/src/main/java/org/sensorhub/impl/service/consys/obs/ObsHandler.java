@@ -32,7 +32,6 @@ import java.util.concurrent.ScheduledFuture;
 import org.geotools.api.filter.Filter;
 import org.geotools.factory.CommonFactoryFinder;
 import org.geotools.filter.Filters;
-import org.geotools.filter.text.cql2.CQL;
 import org.geotools.filter.text.cql2.CQLException;
 import org.sensorhub.api.common.BigId;
 import org.sensorhub.api.data.IDataStreamInfo;
@@ -568,12 +567,12 @@ public class ObsHandler extends BaseResourceHandler<BigId, IObsData, ObsFilter, 
             {
                 try
                 {
-                    var filter = CQL.toFilter(cqlPredicate);
+                    var filter = ObsFilter.parseCqlFilter(cqlPredicate);
                     cqlFilters.add(filter);
                 }
                 catch (CQLException e)
                 {
-                    throw new IllegalArgumentException("Invalid CQL2 filter " + cqlPredicate, e);
+                    throw ServiceErrors.badRequest("Invalid CQL2 filter " + cqlPredicate);
                 }
             }
             if (!cqlFilters.isEmpty())
