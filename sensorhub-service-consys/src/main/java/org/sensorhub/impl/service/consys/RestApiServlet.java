@@ -20,8 +20,11 @@ import static javax.servlet.http.HttpServletResponse.SC_FORBIDDEN;
 import static javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
 import static javax.servlet.http.HttpServletResponse.SC_METHOD_NOT_ALLOWED;
 import static javax.servlet.http.HttpServletResponse.SC_NOT_FOUND;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.nio.channels.ClosedChannelException;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import javax.servlet.AsyncContext;
@@ -206,6 +209,10 @@ public abstract class RestApiServlet extends HttpServlet
                         // case of service error wrapped into runtime exception
                         handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
                     }
+                    else if (isClientDisconnect(e))
+                    {
+                        logClientDisconnect(req, e);
+                    }
                     else
                     {
                         logError(req, e);
@@ -221,8 +228,15 @@ public abstract class RestApiServlet extends HttpServlet
         }
         catch (Exception e)
         {
-            logError(req, e);
-            sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+            if (isClientDisconnect(e))
+            {
+                logClientDisconnect(req, e);
+            }
+            else
+            {
+                logError(req, e);
+                sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+            }
         }
     }
 
@@ -278,6 +292,10 @@ public abstract class RestApiServlet extends HttpServlet
                         // case of service error wrapped into runtime exception
                         handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
                     }
+                    else if (isClientDisconnect(e))
+                    {
+                        logClientDisconnect(req, e);
+                    }
                     else
                     {
                         logError(req, e);
@@ -293,8 +311,15 @@ public abstract class RestApiServlet extends HttpServlet
         }
         catch (Exception e)
         {
-            logError(req, e);
-            sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+            if (isClientDisconnect(e))
+            {
+                logClientDisconnect(req, e);
+            }
+            else
+            {
+                logError(req, e);
+                sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+            }
         }
     }
 
@@ -331,6 +356,10 @@ public abstract class RestApiServlet extends HttpServlet
                         // case of service error wrapped into runtime exception
                         handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
                     }
+                    else if (isClientDisconnect(e))
+                    {
+                        logClientDisconnect(req, e);
+                    }
                     else
                     {
                         logError(req, e);
@@ -346,8 +375,15 @@ public abstract class RestApiServlet extends HttpServlet
         }
         catch (Exception e)
         {
-            logError(req, e);
-            sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+            if (isClientDisconnect(e))
+            {
+                logClientDisconnect(req, e);
+            }
+            else
+            {
+                logError(req, e);
+                sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+            }
         }
     }
 
@@ -384,6 +420,10 @@ public abstract class RestApiServlet extends HttpServlet
                         // case of service error wrapped into runtime exception
                         handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
                     }
+                    else if (isClientDisconnect(e))
+                    {
+                        logClientDisconnect(req, e);
+                    }
                     else
                     {
                         logError(req, e);
@@ -399,8 +439,15 @@ public abstract class RestApiServlet extends HttpServlet
         }
         catch (Exception e)
         {
-            logError(req, e);
-            sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+            if (isClientDisconnect(e))
+            {
+                logClientDisconnect(req, e);
+            }
+            else
+            {
+                logError(req, e);
+                sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+            }
         }
     }
     
@@ -444,9 +491,58 @@ public abstract class RestApiServlet extends HttpServlet
     }
     
     
+    static boolean isClientDisconnect(Throwable error)
+    {
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 16; depth++)
+        {
+            String className = current.getClass().getName();
+            if (current instanceof EOFException ||
+                current instanceof ClosedChannelException ||
+                "org.eclipse.jetty.io.EofException".equals(className) ||
+                className.endsWith(".ClientAbortException"))
+            {
+                return true;
+            }
+            if (current instanceof IOException)
+            {
+                String message = current.getMessage();
+                if (message != null)
+                {
+                    String lower = message.toLowerCase(Locale.ROOT);
+                    if (lower.contains("broken pipe") ||
+                        lower.contains("connection reset") ||
+                        lower.contains("forcibly closed") ||
+                        lower.contains("stream closed") ||
+                        lower.contains("closed channel"))
+                    {
+                        return true;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+
+    protected void logClientDisconnect(HttpServletRequest req, Throwable e)
+    {
+        if (log.isDebugEnabled())
+        {
+            String method = req.getMethod();
+            String url = req.getRequestURI();
+            String query = req.getQueryString() != null ? "?" + req.getQueryString() : "";
+            log.debug("Client disconnected while processing {} {}{}: {}", method, url, query, e.toString());
+        }
+    }
+
+
     protected void logError(HttpServletRequest req, Throwable e)
     {
-        if (log.isErrorEnabled())
+        if (isClientDisconnect(e))
+            logClientDisconnect(req, e);
+        else if (log.isErrorEnabled())
             logRequestInfo(req, e);
     }
     
@@ -491,6 +587,9 @@ public abstract class RestApiServlet extends HttpServlet
     
     public void sendError(int code, String msg, HttpServletRequest req, HttpServletResponse resp)
     {
+        if (resp.isCommitted())
+            return;
+
         try
         {
             var accept = req.getHeader("Accept");
@@ -513,7 +612,10 @@ public abstract class RestApiServlet extends HttpServlet
         }
         catch (IOException e)
         {
-            log.error("Could not send error response", e);
+            if (isClientDisconnect(e))
+                logClientDisconnect(req, e);
+            else
+                log.error("Could not send error response", e);
         }
     }
     
