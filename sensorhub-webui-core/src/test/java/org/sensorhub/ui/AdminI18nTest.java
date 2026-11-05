@@ -70,9 +70,23 @@ public class AdminI18nTest
             "Αναγνωριστικό μονάδας",
             AdminI18n.trConfig(GREEK, ModuleConfig.class, "id.label", "Module ID"));
 
+        assertTranslatedBundleComplete("/org/sensorhub/api/comm/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/api/database/i18n/ConfigMessages");
         assertTranslatedBundleComplete("/org/sensorhub/api/module/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/api/security/i18n/ConfigMessages");
         assertTranslatedBundleComplete("/org/sensorhub/api/sensor/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/api/service/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/comm/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/database/system/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/datastore/view/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/module/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/security/i18n/ConfigMessages");
         assertTranslatedBundleComplete("/org/sensorhub/impl/sensor/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/service/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/service/consys/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/service/ogc/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/impl/system/i18n/ConfigMessages");
+        assertTranslatedBundleComplete("/org/sensorhub/ui/i18n/ConfigMessages");
     }
 
 

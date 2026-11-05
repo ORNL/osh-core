@@ -180,9 +180,9 @@ public class AdminUI extends com.vaadin.ui.UI implements UIConstants
 
         // init main panels
         HorizontalSplitPanel splitPanel = new HorizontalSplitPanel();
-        splitPanel.setMinSplitPosition(300.0f, Unit.PIXELS);
-        splitPanel.setMaxSplitPosition(30.0f, Unit.PERCENTAGE);
-        splitPanel.setSplitPosition(350.0f, Unit.PIXELS);
+        splitPanel.setMinSplitPosition(320.0f, Unit.PIXELS);
+        splitPanel.setMaxSplitPosition(32.0f, Unit.PERCENTAGE);
+        splitPanel.setSplitPosition(380.0f, Unit.PIXELS);
         setContent(splitPanel);
 
         // build left pane
