@@ -79,6 +79,18 @@ public interface IStreamingControlInterface extends IEventProducer
     {
         return new TextEncodingImpl();
     }
+
+
+    /**
+     * Maximum number of commands that may be dispatched concurrently to this
+     * control interface. Defaults to 1 to preserve strict single-command
+     * serialization for drivers that do not explicitly opt into concurrency.
+     * @return positive concurrency bound
+     */
+    public default int getMaxConcurrentCommands()
+    {
+        return 1;
+    }
     
     
     /**

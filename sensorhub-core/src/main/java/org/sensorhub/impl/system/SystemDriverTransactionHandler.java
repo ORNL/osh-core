@@ -373,7 +373,7 @@ class SystemDriverTransactionHandler extends SystemTransactionHandler implements
             {
                 this.sub = sub;
                 commandSubscriptions.put(controlInput.getName(), sub);
-                sub.request(1);
+                sub.request(Math.max(1, controlInput.getMaxConcurrentCommands()));
             }
 
             @Override
