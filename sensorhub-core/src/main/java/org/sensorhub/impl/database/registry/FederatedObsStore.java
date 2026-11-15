@@ -243,6 +243,47 @@ public class FederatedObsStore extends ReadOnlyDataStore<BigId, IObsData, ObsFie
 
 
     @Override
+    public Stream<Entry<BigId, IObsData>> selectEntries(ObsFilter filter, Set<ObsField> fields, long offset)
+    {
+        if (offset <= 0)
+            return selectEntries(filter, fields);
+        if (filter.getLimit() <= offset)
+            return Stream.empty();
+
+        var filterDispatchMap = getFilterDispatchMap(filter);
+        if (filterDispatchMap != null)
+        {
+            if (filterDispatchMap.isEmpty())
+                return Stream.empty();
+            if (filterDispatchMap.size() == 1)
+            {
+                var target = filterDispatchMap.values().iterator().next();
+                long remainingLimit = filter.getLimit() == Long.MAX_VALUE ? Long.MAX_VALUE : filter.getLimit() - offset;
+                return target.db.getObservationStore()
+                    .selectEntries((ObsFilter)target.filter, fields, offset)
+                    .limit(remainingLimit);
+            }
+        }
+        else
+        {
+            var allDbs = parentDb.getAllObsDatabases();
+            if (allDbs.isEmpty())
+                return Stream.empty();
+            if (allDbs.size() == 1)
+            {
+                var db = allDbs.iterator().next();
+                long remainingLimit = filter.getLimit() == Long.MAX_VALUE ? Long.MAX_VALUE : filter.getLimit() - offset;
+                return db.getObservationStore()
+                    .selectEntries(filter, fields, offset)
+                    .limit(remainingLimit);
+            }
+        }
+
+        return selectEntries(filter, fields).skip(offset);
+    }
+
+
+    @Override
     public long countMatchingEntries(ObsFilter filter)
     {
         // if any kind of internal IDs are used, we need to dispatch the correct filter

@@ -297,5 +297,13 @@ public class TestObservations extends AbstractTestApiBase
             selectionCount.incrementAndGet();
             return super.selectEntries(filter);
         }
+
+
+        @Override
+        public Stream<Entry<BigId, IObsData>> selectEntries(ObsFilter filter, long offset)
+        {
+            selectionCount.incrementAndGet();
+            return super.selectEntries(filter, offset);
+        }
     }
 }

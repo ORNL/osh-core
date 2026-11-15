@@ -17,8 +17,8 @@ package org.sensorhub.impl.service.consys;
 import java.util.Map;
 import java.util.Set;
 import java.util.HashMap;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import org.sensorhub.api.common.SensorHubException;
 import org.sensorhub.api.database.IObsSystemDatabase;
 import org.sensorhub.api.datastore.procedure.ProcedureFilter;
@@ -157,9 +157,12 @@ public class ConSysApiService extends AbstractHttpServiceModule<ConSysApiService
         this.securityHandler = new ConSysApiSecurity(this, readDb, config.security.enableAccessControl);
         
         // init thread pool
-        threadPool = Executors.newScheduledThreadPool(
-            Runtime.getRuntime().availableProcessors(),
+        int poolSize = Math.max(16, Math.min(64, Runtime.getRuntime().availableProcessors() * 4));
+        var scheduledPool = new ScheduledThreadPoolExecutor(
+            poolSize,
             new NamedThreadFactory("CSApi-Pool"));
+        scheduledPool.setRemoveOnCancelPolicy(true);
+        threadPool = scheduledPool;
 
         // init timeout monitor
         //timeOutMonitor = new TimeOutMonitor();

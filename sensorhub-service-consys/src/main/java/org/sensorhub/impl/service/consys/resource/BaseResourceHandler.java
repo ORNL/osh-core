@@ -266,10 +266,10 @@ public abstract class BaseResourceHandler<K, V, F extends IQueryFilter, S extend
         var binding = getBinding(ctx, false);
         binding.startCollection();
 
-        // fetch from DB and temporarily handle paging here
-        try (var results = postProcessResultList(dataStore.selectEntries(filter), filter))
+        // fetch from DB and handle paging
+        try (var results = selectPagedEntries(filter, offset))
         {
-            var it = results.skip(offset)
+            var it = results
                 .limit(limit+1) // get one more so we know when to enable paging
                 .iterator();
             
@@ -287,6 +287,13 @@ public abstract class BaseResourceHandler<K, V, F extends IQueryFilter, S extend
     }
     
     
+    protected Stream<Entry<K, V>> selectPagedEntries(F filter, long offset)
+    {
+        var results = postProcessResultList(dataStore.selectEntries(filter), filter);
+        return offset > 0 ? results.skip(offset) : results;
+    }
+
+
     protected Stream<Entry<K, V>> postProcessResultList(Stream<Entry<K, V>> results, F filter)
     {
         return results;

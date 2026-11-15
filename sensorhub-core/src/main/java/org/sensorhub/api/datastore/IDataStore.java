@@ -84,6 +84,35 @@ public interface IDataStore<K, V, VF extends ValueField, Q extends IQueryFilter>
      * value objects that were not included in the {@code fields} parameter.
      */
     public Stream<Entry<K, V>> selectEntries(Q query, Set<VF> fields);
+
+
+    /**
+     * Select entries matching the query starting at {@code offset}
+     * @param query selection filter (datastore specific)
+     * @param offset zero-based number of initial matching entries to skip
+     * @return Stream of matching entries starting at {@code offset}
+     */
+    public default Stream<Entry<K, V>> selectEntries(Q query, long offset)
+    {
+        if (offset <= 0)
+            return selectEntries(query);
+        return selectEntries(query, (Set<VF>)null, offset);
+    }
+
+
+    /**
+     * Select entries matching the query starting at {@code offset} and include selected fields only
+     * @param query selection filter (datastore specific)
+     * @param fields List of value fields to read from datastore (or null to select all fields)
+     * @param offset zero-based number of initial matching entries to skip
+     * @return Stream of matching entries starting at {@code offset}
+     */
+    public default Stream<Entry<K, V>> selectEntries(Q query, Set<VF> fields, long offset)
+    {
+        if (offset <= 0)
+            return selectEntries(query, fields);
+        return selectEntries(query, fields).skip(offset);
+    }
     
     
     /**

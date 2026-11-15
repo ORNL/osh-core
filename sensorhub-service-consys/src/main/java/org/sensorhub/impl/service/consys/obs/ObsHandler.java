@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.stream.Stream;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -585,6 +586,13 @@ public class ObsHandler extends BaseResourceHandler<BigId, IObsData, ObsFilter, 
             builder.withLimit(offset+limit+1);
         
         return builder.build();
+    }
+
+
+    @Override
+    protected Stream<Entry<BigId, IObsData>> selectPagedEntries(ObsFilter filter, long offset)
+    {
+        return offset > 0 ? dataStore.selectEntries(filter, offset) : dataStore.selectEntries(filter);
     }
 
 

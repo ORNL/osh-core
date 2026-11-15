@@ -20,16 +20,24 @@ import static javax.servlet.http.HttpServletResponse.SC_FORBIDDEN;
 import static javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
 import static javax.servlet.http.HttpServletResponse.SC_METHOD_NOT_ALLOWED;
 import static javax.servlet.http.HttpServletResponse.SC_NOT_FOUND;
+import static javax.servlet.http.HttpServletResponse.SC_SERVICE_UNAVAILABLE;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.lang.reflect.Method;
 import java.nio.channels.ClosedChannelException;
 import java.util.Locale;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.servlet.AsyncContext;
+import javax.servlet.AsyncEvent;
+import javax.servlet.AsyncListener;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletRequestWrapper;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -54,6 +62,8 @@ public abstract class RestApiServlet extends HttpServlet
 {
     static final String LOG_REQUEST_MSG = "{} {}{} (from ip={}, user={})";
     static final String INTERNAL_ERROR_MSG = "Internal server error";
+    static final String REQUEST_TIMEOUT_MSG = "Request timed out";
+    static final long ASYNC_REQUEST_TIMEOUT_MS = 60_000L;
     static final String INTERNAL_ERROR_LOG_MSG = INTERNAL_ERROR_MSG + " while processing request " + LOG_REQUEST_MSG;
     static final String ACCESS_DENIED_ERROR_MSG = "Permission denied";
     static final String JSON_CONTENT_TYPE = "application/json";
@@ -178,38 +188,165 @@ public abstract class RestApiServlet extends HttpServlet
     }
 
 
-    @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException
+    @FunctionalInterface
+    protected interface AsyncRequestAction
     {
-        // handle request asynchronously
+        void execute(RequestContext ctx) throws Exception;
+    }
+
+
+    private static void cancelQueuedTask(Future<?> task)
+    {
+        if (task != null && !task.isDone())
+            task.cancel(false);
+    }
+
+
+    private static void completeAsyncQuietly(AsyncContext aCtx)
+    {
+        if (aCtx == null)
+            return;
+        try
+        {
+            aCtx.complete();
+        }
+        catch (IllegalStateException ignored)
+        {
+            // AsyncContext already completed or timed out
+        }
+    }
+
+
+    static boolean isRequestConnectionClosed(HttpServletRequest req)
+    {
+        if (req == null)
+            return false;
+        try
+        {
+            ServletRequest current = req;
+            for (int depth = 0; current instanceof ServletRequestWrapper && depth < 8; depth++)
+                current = ((ServletRequestWrapper)current).getRequest();
+            if (current == null || !"org.eclipse.jetty.server.Request".equals(current.getClass().getName()))
+                return false;
+
+            Method getHttpChannel = current.getClass().getMethod("getHttpChannel");
+            Object channel = getHttpChannel.invoke(current);
+            if (channel == null)
+                return false;
+
+            try
+            {
+                Method isAborted = channel.getClass().getMethod("isAborted");
+                if (Boolean.TRUE.equals(isAborted.invoke(channel)))
+                    return true;
+            }
+            catch (NoSuchMethodException ignored)
+            {
+            }
+
+            Method getEndPoint = channel.getClass().getMethod("getEndPoint");
+            Object endPoint = getEndPoint.invoke(channel);
+            if (endPoint == null)
+                return true;
+
+            Method isOpen = endPoint.getClass().getMethod("isOpen");
+            if (!Boolean.TRUE.equals(isOpen.invoke(endPoint)))
+                return true;
+
+            Method isOutputShutdown = endPoint.getClass().getMethod("isOutputShutdown");
+            return Boolean.TRUE.equals(isOutputShutdown.invoke(endPoint));
+        }
+        catch (Throwable ignored)
+        {
+            return false;
+        }
+    }
+
+
+    protected void dispatchAsync(HttpServletRequest req, HttpServletResponse resp, AsyncRequestAction action)
+    {
         try
         {
             resp.setContentType(JSON_CONTENT_TYPE);
             var ctx = createContext(req, resp);
-            
+
             final AsyncContext aCtx = req.startAsync(req, resp);
-            CompletableFuture.runAsync(() -> {
+            aCtx.setTimeout(ASYNC_REQUEST_TIMEOUT_MS);
+
+            final AtomicBoolean asyncSettled = new AtomicBoolean(false);
+            final AtomicReference<Future<?>> taskRef = new AtomicReference<>();
+
+            aCtx.addListener(new AsyncListener() {
+                @Override
+                public void onComplete(AsyncEvent event)
+                {
+                    asyncSettled.set(true);
+                    cancelQueuedTask(taskRef.get());
+                }
+
+                @Override
+                public void onTimeout(AsyncEvent event)
+                {
+                    if (asyncSettled.compareAndSet(false, true))
+                    {
+                        cancelQueuedTask(taskRef.get());
+                        String query = req.getQueryString() != null ? "?" + req.getQueryString() : "";
+                        log.warn("Async API request timed out after {} ms: {} {}{}",
+                            ASYNC_REQUEST_TIMEOUT_MS, req.getMethod(), req.getRequestURI(), query);
+                        sendError(SC_SERVICE_UNAVAILABLE, REQUEST_TIMEOUT_MSG, req, resp);
+                        completeAsyncQuietly(event.getAsyncContext());
+                    }
+                }
+
+                @Override
+                public void onError(AsyncEvent event)
+                {
+                    if (asyncSettled.compareAndSet(false, true))
+                    {
+                        cancelQueuedTask(taskRef.get());
+                        Throwable err = event.getThrowable();
+                        if (err != null && isClientDisconnect(err))
+                            logClientDisconnect(req, err);
+                        completeAsyncQuietly(event.getAsyncContext());
+                    }
+                }
+
+                @Override
+                public void onStartAsync(AsyncEvent event)
+                {
+                }
+            });
+
+            Future<?> submitted = threadPool.submit(() -> {
+                if (asyncSettled.get() || (!ctx.isStreamRequest() && isRequestConnectionClosed(req)))
+                {
+                    if (asyncSettled.compareAndSet(false, true))
+                        completeAsyncQuietly(aCtx);
+                    return;
+                }
                 try
                 {
                     setCurrentUser(req);
-                    rootHandler.doGet(ctx);
+                    action.execute(ctx);
                 }
                 catch (InvalidRequestException e)
                 {
-                    handleInvalidRequestException(req, resp, e);
+                    if (!asyncSettled.get())
+                        handleInvalidRequestException(req, resp, e);
                 }
                 catch (SecurityException e)
                 {
-                    handleAuthException(req, resp, e);
+                    if (!asyncSettled.get())
+                        handleAuthException(req, resp, e);
                 }
                 catch (Exception e)
                 {
                     if (e.getCause() instanceof InvalidRequestException)
                     {
-                        // case of service error wrapped into runtime exception
-                        handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
+                        if (!asyncSettled.get())
+                            handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
                     }
-                    else if (isClientDisconnect(e))
+                    else if (isClientDisconnect(e) || asyncSettled.get() || (!ctx.isStreamRequest() && isRequestConnectionClosed(req)))
                     {
                         logClientDisconnect(req, e);
                     }
@@ -222,9 +359,13 @@ public abstract class RestApiServlet extends HttpServlet
                 finally
                 {
                     clearCurrentUser();
-                    aCtx.complete();
+                    if (asyncSettled.compareAndSet(false, true))
+                        completeAsyncQuietly(aCtx);
                 }
-            }, threadPool);
+            });
+            taskRef.set(submitted);
+            if (asyncSettled.get())
+                cancelQueuedTask(submitted);
         }
         catch (Exception e)
         {
@@ -238,217 +379,62 @@ public abstract class RestApiServlet extends HttpServlet
                 sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
             }
         }
+    }
+
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException
+    {
+        dispatchAsync(req, resp, ctx -> rootHandler.doGet(ctx));
     }
 
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException
     {
-        // handle request asynchronously
-        try
-        {
-            resp.setContentType(JSON_CONTENT_TYPE);
-            var ctx = createContext(req, resp);
-            
-            final AsyncContext aCtx = req.startAsync(req, resp);
-            CompletableFuture.runAsync(() -> {
-                try
-                {
-                    setCurrentUser(req);
-                    rootHandler.doPost(ctx);
-                    
-                    var uriList = ctx.getResourceUris();
-                    if (uriList.size() == 1)
-                    {
-                        resp.setStatus(SC_CREATED);
-                        resp.setHeader("Location", uriList.iterator().next());
-                    }
-                    else if (!uriList.isEmpty())
-                    {
-                        resp.setStatus(SC_CREATED);
-                        
-                        // prepare to write JSON response
-                        try (var writer = new JsonWriter(new OutputStreamWriter(resp.getOutputStream())))
-                        {
-                            writer.beginArray();
-                            for (var uri: uriList)
-                                writer.value(uri);
-                            writer.endArray();
-                        }
-                    }
-                }
-                catch (InvalidRequestException e)
-                {
-                    handleInvalidRequestException(req, resp, e);
-                }
-                catch (SecurityException e)
-                {
-                    handleAuthException(req, resp, e);
-                }
-                catch (Exception e)
-                {
-                    if (e.getCause() instanceof InvalidRequestException)
-                    {
-                        // case of service error wrapped into runtime exception
-                        handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
-                    }
-                    else if (isClientDisconnect(e))
-                    {
-                        logClientDisconnect(req, e);
-                    }
-                    else
-                    {
-                        logError(req, e);
-                        sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
-                    }
-                }
-                finally
-                {
-                    clearCurrentUser();
-                    aCtx.complete();
-                }
-            }, threadPool);
-        }
-        catch (Exception e)
-        {
-            if (isClientDisconnect(e))
+        dispatchAsync(req, resp, ctx -> {
+            rootHandler.doPost(ctx);
+
+            var uriList = ctx.getResourceUris();
+            if (uriList.size() == 1)
             {
-                logClientDisconnect(req, e);
+                resp.setStatus(SC_CREATED);
+                resp.setHeader("Location", uriList.iterator().next());
             }
-            else
+            else if (!uriList.isEmpty())
             {
-                logError(req, e);
-                sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
+                resp.setStatus(SC_CREATED);
+
+                // prepare to write JSON response
+                try (var writer = new JsonWriter(new OutputStreamWriter(resp.getOutputStream())))
+                {
+                    writer.beginArray();
+                    for (var uri: uriList)
+                        writer.value(uri);
+                    writer.endArray();
+                }
             }
-        }
+        });
     }
 
 
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException
     {
-        // handle request asynchronously
-        try
-        {
-            resp.setContentType(JSON_CONTENT_TYPE);
-            var ctx = createContext(req, resp);
-            
-            final AsyncContext aCtx = req.startAsync(req, resp);
-            CompletableFuture.runAsync(() -> {
-                try
-                {
-                    setCurrentUser(req);
-                    rootHandler.doPut(ctx);
-                    resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
-                }
-                catch (InvalidRequestException e)
-                {
-                    handleInvalidRequestException(req, resp, e);
-                }
-                catch (SecurityException e)
-                {
-                    handleAuthException(req, resp, e);
-                }
-                catch (Exception e)
-                {
-                    if (e.getCause() instanceof InvalidRequestException)
-                    {
-                        // case of service error wrapped into runtime exception
-                        handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
-                    }
-                    else if (isClientDisconnect(e))
-                    {
-                        logClientDisconnect(req, e);
-                    }
-                    else
-                    {
-                        logError(req, e);
-                        sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
-                    }
-                }
-                finally
-                {
-                    clearCurrentUser();
-                    aCtx.complete();
-                }
-            }, threadPool);
-        }
-        catch (Exception e)
-        {
-            if (isClientDisconnect(e))
-            {
-                logClientDisconnect(req, e);
-            }
-            else
-            {
-                logError(req, e);
-                sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
-            }
-        }
+        dispatchAsync(req, resp, ctx -> {
+            rootHandler.doPut(ctx);
+            resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+        });
     }
 
 
     @Override
     protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException
     {
-        // handle request asynchronously
-        try
-        {
-            resp.setContentType(JSON_CONTENT_TYPE);
-            var ctx = createContext(req, resp);
-            
-            final AsyncContext aCtx = req.startAsync(req, resp);
-            CompletableFuture.runAsync(() -> {
-                try
-                {
-                    setCurrentUser(req);
-                    rootHandler.doDelete(ctx);
-                    resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
-                }
-                catch (InvalidRequestException e)
-                {
-                    handleInvalidRequestException(req, resp, e);
-                }
-                catch (SecurityException e)
-                {
-                    handleAuthException(req, resp, e);
-                }
-                catch (Exception e)
-                {
-                    if (e.getCause() instanceof InvalidRequestException)
-                    {
-                        // case of service error wrapped into runtime exception
-                        handleInvalidRequestException(req, resp, (InvalidRequestException)e.getCause());
-                    }
-                    else if (isClientDisconnect(e))
-                    {
-                        logClientDisconnect(req, e);
-                    }
-                    else
-                    {
-                        logError(req, e);
-                        sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
-                    }
-                }
-                finally
-                {
-                    clearCurrentUser();
-                    aCtx.complete();
-                }
-            }, threadPool);
-        }
-        catch (Exception e)
-        {
-            if (isClientDisconnect(e))
-            {
-                logClientDisconnect(req, e);
-            }
-            else
-            {
-                logError(req, e);
-                sendError(SC_INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG, req, resp);
-            }
-        }
+        dispatchAsync(req, resp, ctx -> {
+            rootHandler.doDelete(ctx);
+            resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+        });
     }
     
     
@@ -587,12 +573,12 @@ public abstract class RestApiServlet extends HttpServlet
     
     public void sendError(int code, String msg, HttpServletRequest req, HttpServletResponse resp)
     {
-        if (resp.isCommitted())
+        if (resp == null || resp.isCommitted() || isRequestConnectionClosed(req))
             return;
 
         try
         {
-            var accept = req.getHeader("Accept");
+            var accept = req != null ? req.getHeader("Accept") : null;
             
             if (accept == null || accept.contains("json"))
             {
@@ -610,9 +596,9 @@ public abstract class RestApiServlet extends HttpServlet
             else
                 resp.sendError(code, msg);
         }
-        catch (IOException e)
+        catch (IOException | IllegalStateException e)
         {
-            if (isClientDisconnect(e))
+            if (isClientDisconnect(e) || e instanceof IllegalStateException)
                 logClientDisconnect(req, e);
             else
                 log.error("Could not send error response", e);
@@ -656,21 +642,27 @@ public abstract class RestApiServlet extends HttpServlet
     
     protected void handleAuthException(HttpServletRequest req, HttpServletResponse resp, SecurityException e)
     {
+        if (req == null || resp == null || resp.isCommitted() || isRequestConnectionClosed(req))
+            return;
         try
         {
             log.debug("Not authorized: {}", e.getMessage());
-            
-            if (req != null && resp != null)
-            {
-                if (req.getRemoteUser() == null)
-                    req.authenticate(resp);
-                else
-                    sendError(SC_FORBIDDEN, ACCESS_DENIED_ERROR_MSG, req, resp);
-            }
+
+            if (req.getRemoteUser() == null)
+                req.authenticate(resp);
+            else
+                sendError(SC_FORBIDDEN, ACCESS_DENIED_ERROR_MSG, req, resp);
+        }
+        catch (IllegalStateException e1)
+        {
+            logClientDisconnect(req, e1);
         }
         catch (Exception e1)
         {
-            getLogger().error("Could not send authentication request", e1);
+            if (isClientDisconnect(e1))
+                logClientDisconnect(req, e1);
+            else
+                getLogger().error("Could not send authentication request", e1);
         }
     }
     

@@ -101,6 +101,20 @@ public abstract class AbstractDataStoreWrapper<
     }
 
 
+    @Override
+    public Stream<Entry<K, V>> selectEntries(Q query, long offset)
+    {
+        return getReadStore().selectEntries(query, offset);
+    }
+
+
+    @Override
+    public Stream<Entry<K, V>> selectEntries(Q query, Set<VF> fields, long offset)
+    {
+        return getReadStore().selectEntries(query, fields, offset);
+    }
+
+
     @SuppressWarnings("unchecked")
     public Stream<Entry<K, V>> selectEntries(Q query, VF... fields)
     {

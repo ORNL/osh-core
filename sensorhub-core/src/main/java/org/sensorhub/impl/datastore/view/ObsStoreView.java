@@ -67,6 +67,22 @@ public class ObsStoreView extends ReadOnlyDataStore<BigId, IObsData, ObsField, O
             return Stream.empty();
         }
     }
+
+
+    @Override
+    public Stream<Entry<BigId, IObsData>> selectEntries(ObsFilter filter, Set<ObsField> fields, long offset)
+    {
+        try
+        {
+            if (viewFilter != null)
+                filter = viewFilter.intersect(filter);
+            return delegate.selectEntries(filter, fields, offset);
+        }
+        catch (EmptyFilterIntersection e)
+        {
+            return Stream.empty();
+        }
+    }
     
     
     @Override
