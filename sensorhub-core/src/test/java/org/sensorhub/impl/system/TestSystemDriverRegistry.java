@@ -630,7 +630,12 @@ public class TestSystemDriverRegistry
 
         // ...but must have released the command receiver subscription that was
         // already connected before the member failure
+        // (onSubscribe is delivered asynchronously; a subscription that arrives after the
+        // rollback cancels itself, so wait for the count to settle instead of sampling it once)
         var cmdTopic = EventUtils.getCommandDataTopicID(sensorNet.getUniqueIdentifier(), "command1");
+        long deadline = System.currentTimeMillis() + 5000;
+        while (hub.getEventBus().getNumberOfSubscribers(cmdTopic) != 0 && System.currentTimeMillis() < deadline)
+            Thread.sleep(10);
         assertEquals("Command receiver subscription leaked by failed registration",
             0, hub.getEventBus().getNumberOfSubscribers(cmdTopic));
 
