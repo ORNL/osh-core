@@ -200,6 +200,8 @@ public abstract class AbstractProcessModule<T extends ProcessConfig> extends Abs
     @Override
     public String getUniqueIdentifier()
     {
+        if (processDescription == null)
+            return null;
         return processDescription.getUniqueIdentifier();
     }
 
