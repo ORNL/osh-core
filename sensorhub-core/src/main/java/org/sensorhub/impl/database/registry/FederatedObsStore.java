@@ -24,6 +24,7 @@ import org.sensorhub.api.data.IObsData;
 import org.sensorhub.api.datastore.feature.FoiFilter;
 import org.sensorhub.api.datastore.feature.IFoiStore;
 import org.sensorhub.api.datastore.obs.DataStreamFilter;
+import org.sensorhub.api.datastore.obs.EmptyObsStore;
 import org.sensorhub.api.datastore.obs.IDataStreamStore;
 import org.sensorhub.api.datastore.obs.IObsStore;
 import org.sensorhub.api.datastore.obs.ObsFilter;
@@ -253,11 +254,14 @@ public class FederatedObsStore extends ReadOnlyDataStore<BigId, IObsData, ObsFie
         var filterDispatchMap = getFilterDispatchMap(filter);
         if (filterDispatchMap != null)
         {
-            if (filterDispatchMap.isEmpty())
+            var nonEmptyTargets = filterDispatchMap.values().stream()
+                .filter(v -> !(v.db.getObservationStore() instanceof EmptyObsStore))
+                .toList();
+            if (nonEmptyTargets.isEmpty())
                 return Stream.empty();
-            if (filterDispatchMap.size() == 1)
+            if (nonEmptyTargets.size() == 1)
             {
-                var target = filterDispatchMap.values().iterator().next();
+                var target = nonEmptyTargets.get(0);
                 long remainingLimit = filter.getLimit() == Long.MAX_VALUE ? Long.MAX_VALUE : filter.getLimit() - offset;
                 return target.db.getObservationStore()
                     .selectEntries((ObsFilter)target.filter, fields, offset)
@@ -266,12 +270,14 @@ public class FederatedObsStore extends ReadOnlyDataStore<BigId, IObsData, ObsFie
         }
         else
         {
-            var allDbs = parentDb.getAllObsDatabases();
-            if (allDbs.isEmpty())
+            var nonEmptyDbs = parentDb.getAllObsDatabases().stream()
+                .filter(db -> !(db.getObservationStore() instanceof EmptyObsStore))
+                .toList();
+            if (nonEmptyDbs.isEmpty())
                 return Stream.empty();
-            if (allDbs.size() == 1)
+            if (nonEmptyDbs.size() == 1)
             {
-                var db = allDbs.iterator().next();
+                var db = nonEmptyDbs.get(0);
                 long remainingLimit = filter.getLimit() == Long.MAX_VALUE ? Long.MAX_VALUE : filter.getLimit() - offset;
                 return db.getObservationStore()
                     .selectEntries(filter, fields, offset)
