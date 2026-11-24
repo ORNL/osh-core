@@ -25,10 +25,16 @@ import java.net.URL;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import org.eclipse.jetty.server.Request;
+import org.eclipse.jetty.server.handler.AbstractHandler;
+import org.eclipse.jetty.server.handler.ContextHandler;
+import org.eclipse.jetty.server.handler.HandlerCollection;
+import org.eclipse.jetty.server.handler.HandlerWrapper;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -203,6 +209,61 @@ public class TestHttpServer
     }
     
     
+    @Test
+    public void testRootHandlerAddedAtRuntimeDoesNotRerunServletRequests() throws Exception
+    {
+        // OSCAR layout: no built-in static context, a module adds a root ("/") handler at runtime
+        HttpServerConfig config = new HttpServerConfig();
+        config.autoStart = true;
+        config.staticDocsRootUrl = null;
+        var httpServer = startServerWithConfig(config);
+
+        var rootCalls = new AtomicInteger();
+        var rootContext = new ContextHandler("/");
+        rootContext.setHandler(new AbstractHandler() {
+            @Override
+            public void handle(String target, Request baseRequest, HttpServletRequest req, HttpServletResponse resp) throws IOException
+            {
+                rootCalls.incrementAndGet();
+                resp.setStatus(200);
+                resp.getWriter().print("root");
+                baseRequest.setHandled(true);
+            }
+        });
+        // like the file server module's security handler: it wraps the root context from
+        // outside, so it sees every path before the context checks its own path
+        var wrapperCalls = new AtomicInteger();
+        var rootWrapper = new HandlerWrapper() {
+            @Override
+            public void handle(String target, Request baseRequest, HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException
+            {
+                wrapperCalls.incrementAndGet();
+                super.handle(target, baseRequest, req, resp);
+            }
+        };
+        rootWrapper.setHandler(rootContext);
+        var jetty = httpServer.getJettyServer();
+        rootWrapper.setServer(jetty);
+        rootWrapper.start();
+        ((HandlerCollection)jetty.getHandler()).addHandler(rootWrapper);
+
+        var client = HttpClient.newHttpClient();
+        var servletResponse = client.send(HttpRequest.newBuilder(URI.create(httpServer.getServletsBaseUrl() + "test")).build(),
+            HttpResponse.BodyHandlers.ofString());
+        assertEquals(HttpServer.TEST_MSG, servletResponse.body());
+        assertEquals("A request answered under the servlet root must not also reach a later root handler",
+            0, wrapperCalls.get());
+        assertEquals(0, rootCalls.get());
+
+        var rootUrl = httpServer.getServletsBaseUrl().replaceFirst("/sensorhub/$", "/index.html");
+        var rootResponse = client.send(HttpRequest.newBuilder(URI.create(rootUrl)).build(),
+            HttpResponse.BodyHandlers.ofString());
+        assertEquals("root", rootResponse.body());
+        assertEquals(1, wrapperCalls.get());
+        assertEquals(1, rootCalls.get());
+    }
+
+
     @Test
     public void testConnectWithBasicAuth() throws Exception
     {
