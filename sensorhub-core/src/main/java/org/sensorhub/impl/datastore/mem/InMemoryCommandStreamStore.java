@@ -263,6 +263,11 @@ public class InMemoryCommandStreamStore implements ICommandStreamStore
         // scan existing command streams associated to the same system
         for (var key: procDsKeys)
         {
+            // replacing an entry with itself (e.g. metadata update via replace())
+            // must not trip the same-system/controlInput/validTime uniqueness check
+            if (replace && key.equals(csKey))
+                continue;
+
             var prevCsInfo = map.get(key);
             
             if (prevCsInfo != null &&

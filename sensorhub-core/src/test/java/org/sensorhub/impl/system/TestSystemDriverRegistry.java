@@ -703,4 +703,56 @@ public class TestSystemDriverRegistry
         assertEquals(1, stateDb.getDataStreamStore().size());
     }
 
+
+    @Test
+    public void testReRegisterCommandStreamAfterVarSizeArrayMutation() throws Exception
+    {
+        var txn = new SystemDatabaseTransactionHandler(hub.getEventBus(), stateDb);
+
+        var sml = new SMLHelper();
+        var sysUID = "urn:test:varsize:cmdsys1";
+        var sysHandler = txn.addSystem(new SystemWrapper(sml.createPhysicalSystem()
+            .uniqueID(sysUID)
+            .name("Test Command System")
+            .build()));
+
+        var swe = new SWEHelper();
+        DataRecord cmdRec = swe.createRecord()
+            .name("cmd1")
+            .label("Command 1")
+            .addField("numItems", swe.createCount().id("NUM_ITEMS"))
+            .addField("items", swe.createArray()
+                .withVariableSize("NUM_ITEMS")
+                .withElement("item", swe.createText()))
+            .build();
+        var encoding = new TextEncodingImpl();
+        var csHandler = sysHandler.addOrUpdateCommandStream("cmd1", cmdRec, encoding);
+
+        // record a command so hasCommands = true (issueTimeRange != null)
+        var cmdBlock = cmdRec.createDataBlock();
+        cmdBlock.setIntValue(0, 0);
+        stateDb.getCommandStore().add(new org.sensorhub.api.command.CommandData.Builder()
+            .withCommandStream(csHandler.getCommandStreamKey().getInternalID())
+            .withSender("junit")
+            .withParams(cmdBlock)
+            .build());
+
+        // resize variable array on re-registered structure and rename parent system
+        // so addOrUpdateCommandStream enters CommandStreamTransactionHandler.update()
+        // and exercises InMemoryCommandStreamStore.replace(...)
+        var mutatedCmd = (DataRecord)cmdRec.copy();
+        var liveCmd = mutatedCmd.createDataBlock();
+        liveCmd.setIntValue(0, 3);
+        mutatedCmd.setData(liveCmd);
+        ((DataArrayImpl)mutatedCmd.getComponent("items")).updateSize();
+
+        sysHandler.update(new SystemWrapper(sml.createPhysicalSystem()
+            .uniqueID(sysUID)
+            .name("Test Command System Renamed")
+            .build()));
+
+        sysHandler.addOrUpdateCommandStream("cmd1", mutatedCmd, encoding);
+        assertEquals(1, stateDb.getCommandStreamStore().size());
+    }
+
 }

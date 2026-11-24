@@ -108,7 +108,7 @@ public class DisplayUtils
         {
             if (error instanceof NoClassDefFoundError || error instanceof ClassNotFoundException)
             {
-                msg.append(getDependencyErrorMessage(module.getClass()));
+                msg.append(escapeHtml(getDependencyErrorMessage(module.getClass())).replace("\n", "<br/>"));
                 msg.append("<br/>");
                 break;
             }
@@ -122,18 +122,31 @@ public class DisplayUtils
         int depth = 0;
         for (Throwable t = e; t != null && depth < 5; t = t.getCause(), depth++)
         {
-            msg.append(t.getClass().getSimpleName());
+            msg.append(escapeHtml(t.getClass().getSimpleName()));
             if (t.getMessage() != null)
-                msg.append(": ").append(t.getMessage());
+                msg.append(": ").append(escapeHtml(t.getMessage()));
             msg.append("<br/>");
         }
         msg.append("<br/>See the node log for the full stack trace.");
 
         new Notification(
-                tr("error.title") + "<br/>",
+                escapeHtml(tr("error.title")) + "<br/>",
                 msg.toString(),
                 Notification.Type.ERROR_MESSAGE, true)
                 .show(UI.getCurrent().getPage());
+    }
+
+
+    private static String escapeHtml(String text)
+    {
+        if (text == null || text.isEmpty())
+            return "";
+        return text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;");
     }
     
     

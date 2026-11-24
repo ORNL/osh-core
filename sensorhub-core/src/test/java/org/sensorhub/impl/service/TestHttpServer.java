@@ -74,7 +74,14 @@ public class TestHttpServer
 
     private HttpServer startServerWithConfig(HttpServerConfig config) throws Exception
     {
-        return (HttpServer)registry.loadModule(config);
+        config.autoStart = true;
+        try (var socket = new java.net.ServerSocket(0))
+        {
+            config.httpPort = socket.getLocalPort();
+        }
+        var server = (HttpServer)registry.loadModule(config);
+        server.waitForState(org.sensorhub.api.module.ModuleEvent.ModuleState.STARTED, 5000);
+        return server;
     }
     
     
