@@ -34,8 +34,10 @@ import org.eclipse.jetty.security.ConstraintSecurityHandler;
 import org.eclipse.jetty.security.authentication.BasicAuthenticator;
 import org.eclipse.jetty.security.authentication.ClientCertAuthenticator;
 import org.eclipse.jetty.security.authentication.DigestAuthenticator;
+import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
+import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
@@ -89,8 +91,50 @@ public class HttpServer extends AbstractModule<HttpServerConfig> implements IHtt
     Server server;
     ServletContextHandler servletHandler;
     ConstraintSecurityHandler jettySecurityHandler;
-    
-    
+
+
+    /**
+     * Handler list that modules can add to and remove from while the server runs.
+     * <p>
+     * Jetty's {@link HandlerList} stops at the first handler that handles a request but
+     * cannot be modified once started, while a mutable {@link HandlerCollection} passes
+     * every request to every handler even after one of them has answered it. That made a
+     * root-path module such as the file server, whose security handler sits outside its
+     * context and so matches any path, authenticate and run every {@code /sensorhub}
+     * request a second time. Authenticators that answer a request themselves (session
+     * APIs, login pages) then repeated their side effects, for example minting a second
+     * enrollment invite that revoked the one just returned to the client.
+     * </p>
+     */
+    static class MutableHandlerList extends HandlerCollection
+    {
+        MutableHandlerList()
+        {
+            super(true);
+        }
+
+
+        @Override
+        public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
+            throws IOException, ServletException
+        {
+            if (!isStarted())
+                return;
+
+            Handler[] handlers = getHandlers();
+            if (handlers == null)
+                return;
+
+            for (Handler handler: handlers)
+            {
+                handler.handle(target, baseRequest, request, response);
+                if (baseRequest.isHandled())
+                    return;
+            }
+        }
+    }
+
+
     public HttpServer()
     {
     }
@@ -118,7 +162,7 @@ public class HttpServer extends AbstractModule<HttpServerConfig> implements IHtt
             server = new Server();
             ServerConnector http = null;
             ServerConnector https = null;
-            HandlerCollection handlers = new HandlerCollection(true);
+            HandlerCollection handlers = new MutableHandlerList();
             
             // HTTP connector
             HttpConfiguration httpConfig = new HttpConfiguration();
