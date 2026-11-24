@@ -16,8 +16,6 @@ package org.sensorhub.ui;
 
 import static org.sensorhub.ui.AdminI18n.tr;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import org.sensorhub.api.module.IModule;
 import org.sensorhub.utils.ModuleUtils;
 import com.vaadin.server.FontAwesome;
@@ -100,9 +98,9 @@ public class DisplayUtils
     {
         if (e == null)
             return;
-        
-        StringWriter writer = new StringWriter();
-        
+
+        StringBuilder msg = new StringBuilder();
+
         // scan causes for NoClassDefFoundErrors
         // -> warn of a potential dependency problem
         Throwable error = e;
@@ -110,22 +108,45 @@ public class DisplayUtils
         {
             if (error instanceof NoClassDefFoundError || error instanceof ClassNotFoundException)
             {
-                writer.append(getDependencyErrorMessage(module.getClass()));
-                writer.append('\n');
+                msg.append(escapeHtml(getDependencyErrorMessage(module.getClass())).replace("\n", "<br/>"));
+                msg.append("<br/>");
                 break;
             }
-            
+
             error = error.getCause();
         }
-        
-        e.printStackTrace(new PrintWriter(writer));
-        String stackTrace = "<pre>" + writer.toString() + "</pre>";
-        
+
+        // full stack trace goes to the log; the notification only shows the cause chain
+        ((AdminUI)UI.getCurrent()).getOshLogger().error("Error in module " + module.getLocalID(), e);
+
+        int depth = 0;
+        for (Throwable t = e; t != null && depth < 5; t = t.getCause(), depth++)
+        {
+            msg.append(escapeHtml(t.getClass().getSimpleName()));
+            if (t.getMessage() != null)
+                msg.append(": ").append(escapeHtml(t.getMessage()));
+            msg.append("<br/>");
+        }
+        msg.append("<br/>See the node log for the full stack trace.");
+
         new Notification(
-                tr("error.title") + "<br/>",
-                stackTrace,
+                escapeHtml(tr("error.title")) + "<br/>",
+                msg.toString(),
                 Notification.Type.ERROR_MESSAGE, true)
                 .show(UI.getCurrent().getPage());
+    }
+
+
+    private static String escapeHtml(String text)
+    {
+        if (text == null || text.isEmpty())
+            return "";
+        return text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;");
     }
     
     
