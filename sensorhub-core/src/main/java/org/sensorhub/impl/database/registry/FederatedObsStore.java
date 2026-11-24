@@ -34,6 +34,7 @@ import org.sensorhub.api.datastore.obs.IObsStore.ObsField;
 import org.sensorhub.impl.database.registry.FederatedDatabase.ObsSystemDbFilterInfo;
 import org.sensorhub.impl.datastore.MergeSortSpliterator;
 import org.sensorhub.impl.datastore.ReadOnlyDataStore;
+import org.sensorhub.impl.datastore.mem.InMemoryObsStore;
 import org.vast.util.Asserts;
 
 
@@ -243,6 +244,15 @@ public class FederatedObsStore extends ReadOnlyDataStore<BigId, IObsData, ObsFie
     }
 
 
+    private static boolean isKnownEmptyObsStore(IObsStore store)
+    {
+        // O(1) in-memory checks only: never call PostgisStore.isEmpty(), which executes SELECT COUNT(*).
+        return store == null ||
+            store instanceof EmptyObsStore ||
+            (store instanceof InMemoryObsStore && store.isEmpty());
+    }
+
+
     @Override
     public Stream<Entry<BigId, IObsData>> selectEntries(ObsFilter filter, Set<ObsField> fields, long offset)
     {
@@ -255,7 +265,7 @@ public class FederatedObsStore extends ReadOnlyDataStore<BigId, IObsData, ObsFie
         if (filterDispatchMap != null)
         {
             var nonEmptyTargets = filterDispatchMap.values().stream()
-                .filter(v -> !(v.db.getObservationStore() instanceof EmptyObsStore))
+                .filter(v -> !isKnownEmptyObsStore(v.db.getObservationStore()))
                 .toList();
             if (nonEmptyTargets.isEmpty())
                 return Stream.empty();
@@ -271,7 +281,7 @@ public class FederatedObsStore extends ReadOnlyDataStore<BigId, IObsData, ObsFie
         else
         {
             var nonEmptyDbs = parentDb.getAllObsDatabases().stream()
-                .filter(db -> !(db.getObservationStore() instanceof EmptyObsStore))
+                .filter(db -> !isKnownEmptyObsStore(db.getObservationStore()))
                 .toList();
             if (nonEmptyDbs.isEmpty())
                 return Stream.empty();

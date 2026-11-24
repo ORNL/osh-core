@@ -158,4 +158,61 @@ public class TestFederatedDatabaseRegistry
         assertEquals(2, federatedDatabase.getSystemDescStore().keySet().size());
     }
 
+
+    @Test
+    public void testOffsetPushdownIgnoresDefaultEmptyInMemorySystemStateStore() throws Exception
+    {
+        final long[] pushedOffsetHolder = new long[] {-1L};
+        final boolean[] unoffsetCalledHolder = new boolean[] {false};
+
+        org.sensorhub.api.datastore.obs.IObsStore trackingObsStore = new org.sensorhub.api.datastore.obs.EmptyObsStore()
+        {
+            @Override
+            public java.util.stream.Stream<java.util.Map.Entry<org.sensorhub.api.common.BigId, org.sensorhub.api.data.IObsData>> selectEntries(
+                ObsFilter filter,
+                java.util.Set<ObsField> fields)
+            {
+                unoffsetCalledHolder[0] = true;
+                return java.util.stream.Stream.empty();
+            }
+
+            @Override
+            public java.util.stream.Stream<java.util.Map.Entry<org.sensorhub.api.common.BigId, org.sensorhub.api.data.IObsData>> selectEntries(
+                ObsFilter filter,
+                java.util.Set<ObsField> fields,
+                long offset)
+            {
+                pushedOffsetHolder[0] = offset;
+                return java.util.stream.Stream.empty();
+            }
+        };
+
+        // Wrap trackingObsStore so it is NOT instanceof EmptyObsStore or InMemoryObsStore (simulating OscarTieredObsStore)
+        org.sensorhub.api.datastore.obs.IObsStore nonEmptyDelegate = (org.sensorhub.api.datastore.obs.IObsStore) java.lang.reflect.Proxy.newProxyInstance(
+            org.sensorhub.api.datastore.obs.IObsStore.class.getClassLoader(),
+            new Class<?>[] {org.sensorhub.api.datastore.obs.IObsStore.class},
+            (proxy, method, args) -> method.invoke(trackingObsStore, args));
+
+        IObsSystemDatabase primaryDb = new InMemorySystemStateDatabase((byte)2)
+        {
+            @Override
+            public org.sensorhub.api.datastore.obs.IObsStore getObservationStore()
+            {
+                return nonEmptyDelegate;
+            }
+        };
+        registry.register(primaryDb);
+
+        // SensorHub.start() already registered systemStateDb (databaseNum=0) backed by an empty InMemoryObsStore.
+        // Verify unfiltered offset pagination pushes offset=150000L directly to primaryDb instead of calling selectEntries(..., fields).skip(offset).
+        ObsFilter filter = new ObsFilter.Builder().withLimit(150_015L).build();
+        long count = federatedDatabase.getObservationStore()
+            .selectEntries(filter, null, 150_000L)
+            .count();
+
+        assertEquals(0L, count);
+        assertFalse("Should not fall back to un-offset selectEntries + .skip(offset)", unoffsetCalledHolder[0]);
+        assertEquals(150_000L, pushedOffsetHolder[0]);
+    }
+
 }

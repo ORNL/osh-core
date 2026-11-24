@@ -197,8 +197,14 @@ public abstract class RestApiServlet extends HttpServlet
 
     private static void cancelQueuedTask(Future<?> task)
     {
+        cancelQueuedTask(task, false);
+    }
+
+
+    private static void cancelQueuedTask(Future<?> task, boolean mayInterrupt)
+    {
         if (task != null && !task.isDone())
-            task.cancel(false);
+            task.cancel(mayInterrupt);
     }
 
 
@@ -270,6 +276,8 @@ public abstract class RestApiServlet extends HttpServlet
             resp.setContentType(JSON_CONTENT_TYPE);
             var ctx = createContext(req, resp);
 
+            final boolean isReadOnlyRequest = "GET".equalsIgnoreCase(req.getMethod())
+                    || "HEAD".equalsIgnoreCase(req.getMethod());
             final AsyncContext aCtx = req.startAsync(req, resp);
             aCtx.setTimeout(ASYNC_REQUEST_TIMEOUT_MS);
 
@@ -281,7 +289,7 @@ public abstract class RestApiServlet extends HttpServlet
                 public void onComplete(AsyncEvent event)
                 {
                     asyncSettled.set(true);
-                    cancelQueuedTask(taskRef.get());
+                    cancelQueuedTask(taskRef.get(), false);
                 }
 
                 @Override
@@ -289,7 +297,7 @@ public abstract class RestApiServlet extends HttpServlet
                 {
                     if (asyncSettled.compareAndSet(false, true))
                     {
-                        cancelQueuedTask(taskRef.get());
+                        cancelQueuedTask(taskRef.get(), isReadOnlyRequest);
                         String query = req.getQueryString() != null ? "?" + req.getQueryString() : "";
                         log.warn("Async API request timed out after {} ms: {} {}{}",
                             ASYNC_REQUEST_TIMEOUT_MS, req.getMethod(), req.getRequestURI(), query);
@@ -303,7 +311,7 @@ public abstract class RestApiServlet extends HttpServlet
                 {
                     if (asyncSettled.compareAndSet(false, true))
                     {
-                        cancelQueuedTask(taskRef.get());
+                        cancelQueuedTask(taskRef.get(), isReadOnlyRequest);
                         Throwable err = event.getThrowable();
                         if (err != null && isClientDisconnect(err))
                             logClientDisconnect(req, err);
@@ -358,6 +366,7 @@ public abstract class RestApiServlet extends HttpServlet
                 }
                 finally
                 {
+                    Thread.interrupted();
                     clearCurrentUser();
                     if (asyncSettled.compareAndSet(false, true))
                         completeAsyncQuietly(aCtx);
@@ -365,7 +374,7 @@ public abstract class RestApiServlet extends HttpServlet
             });
             taskRef.set(submitted);
             if (asyncSettled.get())
-                cancelQueuedTask(submitted);
+                cancelQueuedTask(submitted, isReadOnlyRequest);
         }
         catch (Exception e)
         {
