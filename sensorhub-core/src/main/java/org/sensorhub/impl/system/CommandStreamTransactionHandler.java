@@ -165,7 +165,7 @@ public class CommandStreamTransactionHandler implements IEventListener
         
         var dataTopic = EventUtils.getCommandDataTopicID(csInfo);
         if (rootHandler.eventBus.getNumberOfSubscribers(dataTopic) > 0)
-            throw new IllegalStateException("A command receiver is already connected to " + dataTopic);
+            log.warn("Stale command receiver still connected to {}; replacing with new receiver", dataTopic);
         
         // monitor status messages received from receiver to detect timeouts
         var pendingCommands = new ConcurrentHashMap<Long, ICommandData>();
