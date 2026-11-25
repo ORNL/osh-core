@@ -103,18 +103,28 @@ public class AdminUIModule extends AbstractHttpServiceModule<AdminUIConfig> impl
             customForms.put(CommandFilter.class.getCanonicalName(), DatabaseFilterConfigForm.class);
             
             // custom form builders defined in config
-            for (CustomUIConfig customForm: config.customForms)
+            if (config.customForms != null)
             {
-                configClass = customForm.configClass;
-                @SuppressWarnings("unchecked")
-                var clazz = (Class<IModuleConfigForm>)Class.forName(customForm.uiClass);
-                customForms.put(configClass, clazz);
-                getLogger().debug("Loaded custom form for {}", configClass);
+                for (CustomUIConfig customForm: config.customForms)
+                {
+                    configClass = customForm.configClass;
+                    try
+                    {
+                        @SuppressWarnings("unchecked")
+                        var clazz = (Class<IModuleConfigForm>)Class.forName(customForm.uiClass);
+                        customForms.put(configClass, clazz);
+                        getLogger().debug("Loaded custom form for {}", configClass);
+                    }
+                    catch (Exception e)
+                    {
+                        getLogger().error("Error while instantiating form builder for config class {}", configClass, e);
+                    }
+                }
             }
         }
         catch (Exception e)
         {
-            getLogger().error("Error while instantiating form builder for config class {}", configClass, e);
+            getLogger().error("Error while instantiating default form builders", e);
         }
         
         // load custom panels
@@ -131,18 +141,28 @@ public class AdminUIModule extends AbstractHttpServiceModule<AdminUIConfig> impl
             customPanels.put(SPSServiceConfig.class.getCanonicalName(), SPSAdminPanel.class);
             
             // load custom panel builders defined in config
-            for (CustomUIConfig customPanel: config.customPanels)
+            if (config.customPanels != null)
             {
-                configClass = customPanel.configClass;
-                @SuppressWarnings("unchecked")
-                var clazz = (Class<IModuleAdminPanel<?>>)Class.forName(customPanel.uiClass);
-                customPanels.put(configClass, clazz);
-                getLogger().debug("Loaded custom panel for {}", configClass);
-            } 
+                for (CustomUIConfig customPanel: config.customPanels)
+                {
+                    configClass = customPanel.configClass;
+                    try
+                    {
+                        @SuppressWarnings("unchecked")
+                        var clazz = (Class<IModuleAdminPanel<?>>)Class.forName(customPanel.uiClass);
+                        customPanels.put(configClass, clazz);
+                        getLogger().debug("Loaded custom panel for {}", configClass);
+                    }
+                    catch (Exception e)
+                    {
+                        getLogger().error("Error while instantiating panel builder for config class {}", configClass, e);
+                    }
+                }
+            }
         }
         catch (Exception e)
         {
-            getLogger().error("Error while instantiating panel builder for config class {}", configClass, e);
+            getLogger().error("Error while instantiating default panel builders", e);
         }
     }
     
