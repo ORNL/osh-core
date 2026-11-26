@@ -27,7 +27,12 @@ import org.sensorhub.ui.api.IModuleAdminPanel;
 import org.sensorhub.ui.api.IModuleConfigForm;
 import org.sensorhub.ui.api.UIConstants;
 import org.sensorhub.ui.data.MyBeanItem;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import com.vaadin.shared.ui.ContentMode;
+import com.vaadin.ui.UIDetachedException;
 import org.slf4j.Logger;
 import com.vaadin.ui.Button;
 import com.vaadin.ui.HorizontalLayout;
@@ -50,6 +55,19 @@ import com.vaadin.ui.VerticalLayout;
 @SuppressWarnings("serial")
 public class DefaultModulePanel<ModuleType extends IModule<? extends ModuleConfig>> extends VerticalLayout implements IModuleAdminPanel<ModuleType>, UIConstants, IEventListener
 {
+    private static final ExecutorService UI_PUSH_EXECUTOR = new ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(512),
+            r -> {
+                Thread t = new Thread(r, "osh-admin-ui-panel-push");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.DiscardOldestPolicy());
+
     transient ModuleType module;
     HorizontalLayout header;
     Label spinner;
@@ -267,6 +285,38 @@ public class DefaultModulePanel<ModuleType extends IModule<? extends ModuleConfi
     }
 
 
+    private void dispatchUiUpdate(Runnable uiUpdate)
+    {
+        final UI ui = getUI();
+        if (ui == null || ui.isClosing())
+            return;
+
+        if (UI.getCurrent() == ui)
+        {
+            uiUpdate.run();
+            return;
+        }
+
+        UI_PUSH_EXECUTOR.execute(() -> {
+            if (ui.isClosing() || !isAttached())
+                return;
+            try
+            {
+                ui.access(() -> {
+                    if (!isAttached() || ui.isClosing())
+                        return;
+                    uiUpdate.run();
+                    if (isAttached() && !ui.isClosing())
+                        ui.push();
+                });
+            }
+            catch (UIDetachedException ignored)
+            {
+            }
+        });
+    }
+
+
     @Override
     public void handleEvent(final org.sensorhub.api.event.Event e)
     {
@@ -278,38 +328,26 @@ public class DefaultModulePanel<ModuleType extends IModule<? extends ModuleConfi
             switch (((ModuleEvent)e).getType())
             {
                 case STATUS:
-                    getUI().access(() -> {
-                        refreshStatusMessage();
-                        if (isAttached())
-                            getUI().push();
-                    });
+                    dispatchUiUpdate(this::refreshStatusMessage);
                     break;
 
                 case ERROR:
-                    getUI().access(() -> {
-                        refreshErrorMessage();
-                        if (isAttached())
-                            getUI().push();
-                    });
+                    dispatchUiUpdate(this::refreshErrorMessage);
                     break;
 
                 case STATE_CHANGED:
-                    getUI().access(() -> {
+                    dispatchUiUpdate(() -> {
                         refreshState();
                         refreshStatusMessage();
                         refreshErrorMessage();
                         refreshContent();
-                        if (isAttached())
-                            getUI().push();
                     });
                     break;
 
                 case CONFIG_CHANGED:
-                    getUI().access(() -> {
+                    dispatchUiUpdate(() -> {
                         DefaultModulePanel.this.removeAllComponents();
                         DefaultModulePanel.this.build(new MyBeanItem<>(module.getConfiguration()), module);
-                        if (isAttached())
-                            getUI().push();
                     });
                     break;
 
