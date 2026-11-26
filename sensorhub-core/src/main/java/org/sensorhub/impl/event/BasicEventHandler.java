@@ -51,8 +51,6 @@ public class BasicEventHandler implements IEventHandler
     static final Logger log = LoggerFactory.getLogger(BasicEventHandler.class);
     
     List<IEventListener> listeners = new ArrayList<>();
-    List<IEventListener> toDelete = new ArrayList<>();
-    List<IEventListener> toAdd = new ArrayList<>();
     Deque<Event> eventQueue = new LinkedBlockingDeque<>();
     boolean inPublish = false;
     
@@ -61,94 +59,87 @@ public class BasicEventHandler implements IEventHandler
     public synchronized void registerListener(IEventListener listener)
     {
         if (!listeners.contains(listener))
-        {
-            // add directly or through temporary list if publishing
-            if (!inPublish)
-                listeners.add(listener);
-            else
-                toAdd.add(listener);
-        }
+            listeners.add(listener);
     }
 
 
     @Override
     public synchronized void unregisterListener(IEventListener listener)
     {
-        // remove directly or through temporary list if publishing
-        if (!inPublish)
-            listeners.remove(listener);
-        else
-            toDelete.add(listener);
+        listeners.remove(listener);
     }
     
     
     @Override
-    public synchronized void publish(Event e)
+    public void publish(Event e)
     {
-        // case of recursive call
-        if (inPublish)
+        List<IEventListener> snapshot;
+        synchronized (this)
         {
-            eventQueue.addLast(e);
-        }
-        else
-        {        
-            try
+            // Enqueue recursive or concurrent publishes so listener callbacks execute
+            // outside this monitor and cannot invert lock order with module/UI locks.
+            if (inPublish)
             {
-                inPublish = true;
-                for (Iterator<IEventListener> it = listeners.iterator(); it.hasNext(); )
+                eventQueue.addLast(e);
+                return;
+            }
+            inPublish = true;
+            snapshot = new ArrayList<>(listeners);
+        }
+
+        Event current = e;
+        try
+        {
+            while (true)
+            {
+                dispatchSnapshot(current, snapshot);
+                synchronized (this)
                 {
-                    IEventListener listener = it.next();
-                    
-                    try
+                    if (eventQueue.isEmpty())
                     {
-                        listener.handleEvent(e);
+                        inPublish = false;
+                        return;
                     }
-                    catch (Throwable ex)
-                    {
-                        String srcName = e.getSource() != null ? e.getSource().getClass().getSimpleName() : e.getSourceID();
-                        String destName = listener.getClass().getSimpleName();
-                        if (destName.isEmpty()) // case of anonymous class
-                        {
-                            destName = listener.getClass().getName();
-                            destName = destName.substring(destName.lastIndexOf('.')+1);
-                        }
-                        log.error("Uncaught exception while dispatching event from {} to {}", srcName, destName, ex);
-                    }                    
+                    current = eventQueue.pollFirst();
+                    snapshot = new ArrayList<>(listeners);
                 }
             }
-            finally
+        }
+        finally
+        {
+            synchronized (this)
             {
-                // make sure we end our publish session even in case of uncaught error
-                inPublish = false;
-                commitChanges();
+                if (inPublish)
+                {
+                    eventQueue.clear();
+                    inPublish = false;
+                }
             }
         }
     }
-    
-    
-    private final void commitChanges()
+
+
+    private void dispatchSnapshot(Event e, List<IEventListener> snapshot)
     {
-        commitRemoves();
-        commitAdds();
-        
-        while (!eventQueue.isEmpty())
-            publish(eventQueue.pollFirst());
-    }
-    
-    
-    private final void commitAdds()
-    {
-        for (IEventListener listener: toAdd)
-            listeners.add(listener);
-        toAdd.clear();
-    }
-    
-    
-    private final void commitRemoves()
-    {
-        for (IEventListener listener: toDelete)
-            listeners.remove(listener);
-        toDelete.clear();
+        for (IEventListener listener : snapshot)
+        {
+            try
+            {
+                listener.handleEvent(e);
+            }
+            catch (Throwable ex)
+            {
+                String srcName = e != null && e.getSource() != null ? e.getSource().getClass().getSimpleName()
+                        : (e != null ? e.getSourceID() : "unknown");
+                String destName = listener.getClass().getSimpleName();
+                if (destName.isEmpty()) // case of anonymous class
+                {
+                    destName = listener.getClass().getName();
+                    destName = destName.substring(destName.lastIndexOf('.')+1);
+                }
+                log.error("Uncaught exception while dispatching event from {} to {}", srcName, destName, ex);
+            }
+        }
     }
     
     
@@ -160,8 +151,8 @@ public class BasicEventHandler implements IEventHandler
 
 
     @Override
-    public void clearAllListeners()
+    public synchronized void clearAllListeners()
     {
-        listeners.clear();        
+        listeners.clear();
     }
 }

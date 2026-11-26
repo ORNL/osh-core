@@ -48,8 +48,6 @@ import org.sensorhub.api.event.IEventListener;
 public class WeakEventHandler implements IEventHandler
 {
     List<WeakReference<IEventListener>> listeners = new ArrayList<>();
-    List<IEventListener> toDelete = new ArrayList<>();
-    List<IEventListener> toAdd = new ArrayList<>();
     Deque<Event> eventQueue = new LinkedBlockingDeque<>();
     boolean inPublish = false;
     
@@ -58,82 +56,78 @@ public class WeakEventHandler implements IEventHandler
     public synchronized void registerListener(IEventListener listener)
     {
         if (!hasWeakRef(listener))
-        {
-            // add directly or through temporary list if publishing
-            if (!inPublish)
-                addWeakRef(listener);
-            else
-                toAdd.add(listener);
-        }
+            addWeakRef(listener);
     }
 
 
     @Override
     public synchronized void unregisterListener(IEventListener listener)
     {
-        // remove directly or through temporary list if publishing
-        if (!inPublish)
-            removeWeakRef(listener);
-        else
-            toDelete.add(listener);
+        removeWeakRef(listener);
     }
     
     
     @Override
-    public synchronized void publish(Event e)
+    public void publish(Event e)
     {
-        // case of recursive call
-        if (inPublish)
+        List<IEventListener> snapshot;
+        synchronized (this)
         {
-            eventQueue.addLast(e);
-        }
-        else
-        {        
-            try
+            if (inPublish)
             {
-                inPublish = true;
-                for (Iterator<WeakReference<IEventListener>> it = listeners.iterator(); it.hasNext(); )
+                eventQueue.addLast(e);
+                return;
+            }
+            inPublish = true;
+            snapshot = snapshotLiveListeners();
+        }
+
+        Event current = e;
+        try
+        {
+            while (true)
+            {
+                for (IEventListener listener : snapshot)
+                    listener.handleEvent(current);
+
+                synchronized (this)
                 {
-                    IEventListener listener = it.next().get();
-                    if (listener != null)
-                        listener.handleEvent(e);
-                    else
-                        it.remove(); // purge cleared references
+                    if (eventQueue.isEmpty())
+                    {
+                        inPublish = false;
+                        return;
+                    }
+                    current = eventQueue.pollFirst();
+                    snapshot = snapshotLiveListeners();
                 }
             }
-            finally
+        }
+        finally
+        {
+            synchronized (this)
             {
-                // make sure we end our publish session even in case of uncaught error
-                inPublish = false;
-                commitChanges();
+                if (inPublish)
+                {
+                    eventQueue.clear();
+                    inPublish = false;
+                }
             }
         }
     }
-    
-    
-    private final void commitChanges()
+
+
+    private List<IEventListener> snapshotLiveListeners()
     {
-        commitRemoves();
-        commitAdds();
-        
-        while (!eventQueue.isEmpty())
-            publish(eventQueue.pollFirst());
-    }
-    
-    
-    private final void commitAdds()
-    {
-        for (IEventListener listener: toAdd)
-            addWeakRef(listener);
-        toAdd.clear();
-    }
-    
-    
-    private final void commitRemoves()
-    {
-        for (IEventListener listener: toDelete)
-            removeWeakRef(listener);
-        toDelete.clear();
+        List<IEventListener> live = new ArrayList<>(listeners.size());
+        for (Iterator<WeakReference<IEventListener>> it = listeners.iterator(); it.hasNext(); )
+        {
+            IEventListener listener = it.next().get();
+            if (listener != null)
+                live.add(listener);
+            else
+                it.remove(); // purge cleared references
+        }
+        return live;
     }
     
     
@@ -181,8 +175,8 @@ public class WeakEventHandler implements IEventHandler
 
 
     @Override
-    public void clearAllListeners()
+    public synchronized void clearAllListeners()
     {
-        listeners.clear();        
+        listeners.clear();
     }
 }
