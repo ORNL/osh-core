@@ -17,7 +17,12 @@ package org.sensorhub.impl.module;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.commons.io.FileUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -158,6 +163,110 @@ public class TestModuleConfigJsonFile
         configDb = new ModuleConfigJsonFile(configFile.getAbsolutePath(), false);
         
         assertFalse(configDb.contains(config1.id));
+    }
+
+
+    @Test
+    public void testCommitPrunesOldTimestampedBackupsAndPreservesManualBackups() throws Exception
+    {
+        Path dir = Files.createTempDirectory("osh-config-rotation-");
+        try
+        {
+            File isolatedConfig = dir.resolve("config.json").toFile();
+            FileUtils.copyURLToFile(TestModuleConfigJsonFile.class.getResource("/module-config.json"), isolatedConfig);
+
+            for (int i = 1; i <= 30; i++)
+            {
+                String stamp = String.format("202501010000%02d", i);
+                Files.writeString(dir.resolve("config.json.bak." + stamp), "[]");
+            }
+            Path manualPre = dir.resolve("config.json.bak.pre26");
+            Path manualNamed = dir.resolve("config.json.bak.golden");
+            Path unrelated = dir.resolve("other.json.bak.20250101000001");
+            Files.writeString(manualPre, "[]");
+            Files.writeString(manualNamed, "[]");
+            Files.writeString(unrelated, "[]");
+
+            ModuleConfigJsonFile rotatingDb = new ModuleConfigJsonFile(isolatedConfig.getAbsolutePath(), true);
+            ProcessConfig cfg = new ProcessConfig();
+            cfg.id = UUID.randomUUID().toString();
+            cfg.name = "RotationTestModule";
+            cfg.moduleClass = "org.sensorhub.process.ProcessModel";
+            rotatingDb.add(cfg);
+            rotatingDb.commit();
+
+            List<String> timestamped;
+            try (Stream<Path> entries = Files.list(dir))
+            {
+                timestamped = entries
+                        .map(p -> p.getFileName().toString())
+                        .filter(name -> name.matches("^config\\.json\\.bak\\.\\d{14}$"))
+                        .sorted()
+                        .collect(Collectors.toList());
+            }
+
+            assertEquals("Timestamped backups must be capped at DEFAULT_MAX_BACKUPS",
+                    ModuleConfigJsonFile.DEFAULT_MAX_BACKUPS, timestamped.size());
+            assertFalse("Oldest timestamped backups must be pruned",
+                    timestamped.contains("config.json.bak.20250101000001"));
+            assertFalse("Sixth oldest timestamped backup must be pruned once new commit rotates in",
+                    timestamped.contains("config.json.bak.20250101000006"));
+            assertTrue("Newer timestamped backup must be retained",
+                    timestamped.contains("config.json.bak.20250101000007"));
+            assertTrue("Manual pre-upgrade backup must never be pruned", Files.exists(manualPre));
+            assertTrue("Manual named backup must never be pruned", Files.exists(manualNamed));
+            assertTrue("Unrelated config backup must never be pruned", Files.exists(unrelated));
+
+            ModuleConfigJsonFile reloaded = new ModuleConfigJsonFile(isolatedConfig.getAbsolutePath(), false);
+            assertTrue(reloaded.contains(cfg.id));
+        }
+        finally
+        {
+            FileUtils.deleteDirectory(dir.toFile());
+        }
+    }
+
+
+    @Test
+    public void testCommitHonorsMaxBackupsSystemProperty() throws Exception
+    {
+        Path dir = Files.createTempDirectory("osh-config-rotation-prop-");
+        String previous = System.getProperty(ModuleConfigJsonFile.MAX_BACKUPS_PROPERTY);
+        try
+        {
+            System.setProperty(ModuleConfigJsonFile.MAX_BACKUPS_PROPERTY, "3");
+            File isolatedConfig = dir.resolve("config.json").toFile();
+            FileUtils.copyURLToFile(TestModuleConfigJsonFile.class.getResource("/module-config.json"), isolatedConfig);
+            for (int i = 1; i <= 5; i++)
+            {
+                Files.writeString(dir.resolve(String.format("config.json.bak.202501010000%02d", i)), "[]");
+            }
+
+            ModuleConfigJsonFile rotatingDb = new ModuleConfigJsonFile(isolatedConfig.getAbsolutePath(), true);
+            rotatingDb.commit();
+
+            List<String> timestamped;
+            try (Stream<Path> entries = Files.list(dir))
+            {
+                timestamped = entries
+                        .map(p -> p.getFileName().toString())
+                        .filter(name -> name.matches("^config\\.json\\.bak\\.\\d{14}$"))
+                        .sorted()
+                        .collect(Collectors.toList());
+            }
+            assertEquals(3, timestamped.size());
+            assertFalse(timestamped.contains("config.json.bak.20250101000003"));
+            assertTrue(timestamped.contains("config.json.bak.20250101000004"));
+            assertTrue(timestamped.contains("config.json.bak.20250101000005"));
+        }
+        finally
+        {
+            if (previous == null)
+                System.clearProperty(ModuleConfigJsonFile.MAX_BACKUPS_PROPERTY);
+            else
+                System.setProperty(ModuleConfigJsonFile.MAX_BACKUPS_PROPERTY, previous);
+            FileUtils.deleteDirectory(dir.toFile());
+        }
     }
     
     
