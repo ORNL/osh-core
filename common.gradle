@@ -6,7 +6,7 @@ ext.oshCoreVersion = '2.0-beta2'
 buildscript {
   repositories {
     maven {
-      url "https://plugins.gradle.org/m2/"
+      url = "https://plugins.gradle.org/m2/"
     }
   }
   dependencies {
@@ -17,9 +17,10 @@ buildscript {
     
 allprojects  {
   group = 'org.sensorhub'
+  ext.oshCoreVersion = '2.0-beta2'
   
   repositories {
-    maven { url "https://repo.maven.apache.org/maven2" }
+    maven { url = "https://repo.maven.apache.org/maven2" }
   }
   
   // set build number to HEAD SHA-1
@@ -80,7 +81,7 @@ subprojects {
 
   // default test dependencies
   dependencies {
-    testImplementation 'junit:junit:4.13'
+    testImplementation 'junit:junit:4.13.2'
     testImplementation 'xmlunit:xmlunit:1.6'
   }
 
@@ -88,9 +89,9 @@ subprojects {
   test {
     testLogging {
       events 'PASSED', 'FAILED'
-      showCauses true
-      showStackTraces true
-      exceptionFormat 'full'
+      showCauses = true
+      showStackTraces = true
+      exceptionFormat = 'full'
     }
   }
   

@@ -8,8 +8,8 @@ rootProject.allprojects {
   ext.vaadinVersion = '8.14.3'
   repositories {
     maven {
-      name 'vaadin-addons'
-      url "https://maven.vaadin.com/vaadin-addons"
+      name = 'vaadin-addons'
+      url = "https://maven.vaadin.com/vaadin-addons"
     }
   }
 }

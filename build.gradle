@@ -4,8 +4,10 @@ apply from: 'release.gradle'
 description = 'OSH Core Modules'
 
 
+def resolvedOshCoreVersion = oshCoreVersion
+
 allprojects  {
-  version = oshCoreVersion
+  version = resolvedOshCoreVersion
   
   // skip OSGI task on SWE library projects
   if (project.projectDir.getAbsolutePath().contains("lib-ogc")) {
@@ -17,7 +19,7 @@ allprojects  {
 // dependencies for inclusion in distribution
 dependencies {
   project.subprojects.each {
-    p -> implementation p
+    p -> implementation project(p.path)
   }
 }
 

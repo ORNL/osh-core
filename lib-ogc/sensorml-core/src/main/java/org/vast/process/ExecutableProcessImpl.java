@@ -542,13 +542,6 @@ public abstract class ExecutableProcessImpl implements IProcessExec
 
 
     @Override
-    protected void finalize() throws Throwable
-    {
-        this.dispose();
-    }
-
-
-    @Override
     public String toString()
     {
         StringBuilder text = new StringBuilder();
