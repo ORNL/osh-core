@@ -10,7 +10,7 @@ buildscript {
     }
   }
   dependencies {
-    classpath "biz.aQute.bnd:biz.aQute.bnd.gradle:7.0.0"
+    classpath "biz.aQute.bnd:biz.aQute.bnd.gradle:7.5.0"
   }
 }
 
@@ -23,20 +23,15 @@ allprojects  {
   }
   
   // set build number to HEAD SHA-1
-  def stdout = new ByteArrayOutputStream()
-  exec {
+  ext.buildNumber = providers.exec {
       commandLine('git','rev-parse','--short','HEAD')
-      standardOutput = stdout
-      // hide errors and don't throw exception if not a git repo
-      errorOutput = new ByteArrayOutputStream()
       ignoreExitValue = true
-  }
-  ext.buildNumber = "$stdout".trim()
+  }.standardOutput.asText.getOrElse('').trim()
   
   pluginManager.withPlugin('java') {
     extensions.configure(JavaPluginExtension) { JavaPluginExtension javaExtension ->
-      javaExtension.sourceCompatibility = JavaVersion.VERSION_17
-      javaExtension.targetCompatibility = JavaVersion.VERSION_17
+      javaExtension.sourceCompatibility = JavaVersion.VERSION_25
+      javaExtension.targetCompatibility = JavaVersion.VERSION_25
     }
   }
 }

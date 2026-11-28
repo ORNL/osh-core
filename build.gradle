@@ -63,7 +63,7 @@ task allJavadoc(type: Javadoc) {
           'net/opengis/**',
           'org/vast/**'
   classpath = files(configurations.runtimeClasspath)
-  destinationDir = file("${buildDir}/docs/javadoc")
+  destinationDir = layout.buildDirectory.dir('docs/javadoc').get().asFile
   title = "OpenSensorHub ${version} API"
   options.addBooleanOption('-frames', true)
 }
@@ -84,7 +84,7 @@ task releaseJavadoc {
     mkdir javadocDir
     copy {
       into javadocDir
-      from ("${buildDir}/docs/javadoc") {
+      from (layout.buildDirectory.dir('docs/javadoc')) {
         include '**/*'
       }
     }

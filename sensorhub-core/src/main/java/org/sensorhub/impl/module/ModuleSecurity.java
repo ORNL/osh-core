@@ -14,7 +14,6 @@ Copyright (C) 2012-2016 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.module;
 
-import java.security.AccessControlException;
 import org.sensorhub.api.module.IModule;
 import org.sensorhub.api.security.IPermission;
 import org.sensorhub.api.security.ISecurityManager;
@@ -66,7 +65,7 @@ public class ModuleSecurity
         // retrieve currently logged in user
         IUserInfo user = currentUser.get();
         if (user == null)
-            throw new AccessControlException(perm.getErrorMessage() + ": No user specified");
+            throw new SecurityException(perm.getErrorMessage() + ": No user specified");
         
         // request authorization
         return module.getParentHub().getSecurityManager().isAuthorized(user, new PermissionRequest(perm));
@@ -83,7 +82,7 @@ public class ModuleSecurity
     {
         // request authorization
         if (!hasPermission(perm))
-            throw new AccessControlException("User " + currentUser.get().getId() + ", " + perm.getErrorMessage());
+            throw new SecurityException("User " + currentUser.get().getId() + ", " + perm.getErrorMessage());
     }
     
     
