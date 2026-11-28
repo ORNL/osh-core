@@ -20,16 +20,21 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Reader;
 import java.lang.reflect.Type;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.sensorhub.api.module.IModuleConfigRepository;
 import org.sensorhub.api.module.ModuleConfig;
 import org.sensorhub.impl.datastore.DataStoreFiltersTypeAdapterFactory;
@@ -65,6 +70,8 @@ public class ModuleConfigJsonFile implements IModuleConfigRepository
 {
     private static final Logger log = LoggerFactory.getLogger(ModuleConfigJsonFile.class);
     private static final String OBJ_CLASS_FIELD = "objClass";
+    public static final int DEFAULT_MAX_BACKUPS = 25;
+    static final String MAX_BACKUPS_PROPERTY = "osh.config.maxBackups";
     
     Map<String, ModuleConfig> configMap;
     Gson gson;
@@ -275,6 +282,7 @@ public class ModuleConfigJsonFile implements IModuleConfigRepository
                 String timetag = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
                 File bakFile = new File(configFile.getAbsolutePath() + ".bak." + timetag );
                 Files.move(configFile.toPath(), bakFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                pruneOldBackups();
             }
             catch (IOException e)
             {
@@ -283,6 +291,76 @@ public class ModuleConfigJsonFile implements IModuleConfigRepository
         }
         
         writeJSON();
+    }
+
+
+    private void pruneOldBackups()
+    {
+        int maxBackups = resolveMaxBackups();
+        if (maxBackups <= 0)
+            return;
+
+        Path configPath = configFile.toPath().toAbsolutePath().normalize();
+        Path parent = configPath.getParent();
+        if (parent == null || !Files.isDirectory(parent))
+            return;
+
+        String prefix = configFile.getName() + ".bak.";
+        Pattern timestampedBackupPattern = Pattern.compile("^" + Pattern.quote(prefix) + "\\d{14}$");
+        List<Path> timestampedBackups = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(parent))
+        {
+            for (Path entry : stream)
+            {
+                Path fileNamePath = entry.getFileName();
+                if (fileNamePath == null)
+                    continue;
+                if (!timestampedBackupPattern.matcher(fileNamePath.toString()).matches())
+                    continue;
+                if (!Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS))
+                    continue;
+                timestampedBackups.add(entry);
+            }
+        }
+        catch (IOException e)
+        {
+            log.warn("Could not list config backups for rotation in {}", parent, e);
+            return;
+        }
+
+        if (timestampedBackups.size() <= maxBackups)
+            return;
+
+        timestampedBackups.sort(Comparator.comparing(
+                p -> p.getFileName().toString(), Comparator.reverseOrder()));
+        for (int i = maxBackups; i < timestampedBackups.size(); i++)
+        {
+            Path stale = timestampedBackups.get(i);
+            try
+            {
+                Files.deleteIfExists(stale);
+            }
+            catch (IOException e)
+            {
+                log.warn("Could not prune stale config backup {}", stale, e);
+            }
+        }
+    }
+
+
+    static int resolveMaxBackups()
+    {
+        String configured = System.getProperty(MAX_BACKUPS_PROPERTY);
+        if (configured == null || configured.isBlank())
+            return DEFAULT_MAX_BACKUPS;
+        try
+        {
+            return Integer.parseInt(configured.trim());
+        }
+        catch (NumberFormatException e)
+        {
+            return DEFAULT_MAX_BACKUPS;
+        }
     }
     
     
